@@ -62,6 +62,7 @@ function handleConvert() {
 
 /**
  * Parse markdown into test case objects
+ * Handles both markdown format (#### headings) and plain BDD format (TC01 - Title)
  */
 function parseMarkdown(markdown) {
     const lines = markdown.split('\n');
@@ -83,8 +84,13 @@ function parseMarkdown(markdown) {
             continue;
         }
 
-        // Check if this is a test case heading (#### )
-        if (trimmedLine.startsWith('#### ')) {
+        // Check if this is a test case heading
+        // Format 1: #### TC01 — Title — P1 (markdown format)
+        // Format 2: TC01 - Title - Subtitle [Priority: P1] (plain format)
+        const isMarkdownHeading = trimmedLine.startsWith('#### ');
+        const isPlainHeading = /^TC\d+\s*[-–—]\s*.+/.test(trimmedLine);
+        
+        if (isMarkdownHeading || isPlainHeading) {
             // Save previous test case if exists
             if (currentTestCase) {
                 // Process the collected block lines
@@ -93,7 +99,13 @@ function parseMarkdown(markdown) {
             }
 
             // Start new test case
-            const heading = trimmedLine.substring(5).trim(); // Remove '#### '
+            let heading;
+            if (isMarkdownHeading) {
+                heading = trimmedLine.substring(5).trim(); // Remove '#### '
+            } else {
+                heading = trimmedLine;
+            }
+            
             const { id, title, priority } = parseHeading(heading);
             
             currentTestCase = {
@@ -126,20 +138,32 @@ function parseMarkdown(markdown) {
 
 /**
  * Parse heading to extract ID, title, and priority
- * Format: TC01 — Update Name (Happy Path) — P1
+ * Formats:
+ *   - TC01 — Update Name (Happy Path) — P1
+ *   - TC01 - Update Profile Name - Happy Path [Priority: P1]
  */
 function parseHeading(heading) {
-    // Extract priority first (— P1 or — P0 at the end)
     let priority = 'P1'; // default
-    const priorityMatch = heading.match(/\s*—\s*(P[0-9]+)\s*$/i);
-    if (priorityMatch) {
-        priority = priorityMatch[1].toUpperCase();
+    
+    // Extract priority from [Priority: P1] format
+    const bracketPriorityMatch = heading.match(/\[Priority:\s*(P[0-9]+)\]/i);
+    if (bracketPriorityMatch) {
+        priority = bracketPriorityMatch[1].toUpperCase();
         // Remove priority from heading for further parsing
-        heading = heading.replace(/\s*—\s*P[0-9]+\s*$/i, '').trim();
+        heading = heading.replace(/\s*\[Priority:\s*P[0-9]+\]/i, '').trim();
+    }
+    
+    // Extract priority from — P1 format at the end
+    const emDashPriorityMatch = heading.match(/\s*[—–]\s*(P[0-9]+)\s*$/i);
+    if (emDashPriorityMatch) {
+        priority = emDashPriorityMatch[1].toUpperCase();
+        // Remove priority from heading for further parsing
+        heading = heading.replace(/\s*[—–]\s*P[0-9]+\s*$/i, '').trim();
     }
 
-    // Pattern: TC followed by alphanumeric, underscore, or dash, then separator (—, -, or :), then title
-    const idPattern = /^(TC[0-9A-Za-z_-]+)\s*[—\-:]\s*(.+)$/i;
+    // Pattern: TC followed by numbers, then separator (—, –, -, or :), then title
+    // Matches: TC01 - Title, TC01 — Title, TC01: Title
+    const idPattern = /^(TC\d+)\s*[—–\-:]\s*(.+)$/i;
     const match = heading.match(idPattern);
 
     if (match) {
@@ -160,58 +184,124 @@ function parseHeading(heading) {
 
 /**
  * Process a test case block to extract sections
- * Handles inline format: **Given** content here
+ * Handles multiple formats:
+ *   - **Given** content (markdown bold)
+ *   - Given content (plain BDD)
+ *   - And content (continuation)
  */
 function processTestCaseBlock(testCase, blockLines) {
+    let currentSection = null; // 'given', 'steps', 'expectedResults', 'actualResults'
+    
     for (const line of blockLines) {
         const trimmed = line.trim();
-        if (!trimmed) continue;
+        if (!trimmed) {
+            // Empty line resets current section
+            currentSection = null;
+            continue;
+        }
 
-        // Check for inline format: **Given** content or **When** content or **Then** content
-        // Pattern matches: **Given** content, **When** content, **Then** content, **Actual Results** content
-        const inlinePattern = /^\*\*((?:Given|When|Then|Actual\s+Results))\*\*\s*(.+)$/i;
-        const inlineMatch = trimmed.match(inlinePattern);
+        // Check for markdown inline format: **Given** content
+        const markdownPattern = /^\*\*((?:Given|When|Then|Actual\s+Results))\*\*\s*(.+)$/i;
+        const markdownMatch = trimmed.match(markdownPattern);
 
-        if (inlineMatch) {
-            const sectionType = inlineMatch[1].toLowerCase().replace(/\s+/g, ' ');
-            const content = inlineMatch[2].trim();
+        if (markdownMatch) {
+            const sectionType = markdownMatch[1].toLowerCase().replace(/\s+/g, ' ');
+            const content = markdownMatch[2].trim();
 
             // Map to our section keys
             if (sectionType === 'given') {
+                currentSection = 'given';
                 testCase.given.push(cleanContentLine(content));
             } else if (sectionType === 'when') {
+                currentSection = 'steps';
                 testCase.steps.push(cleanContentLine(content));
             } else if (sectionType === 'then') {
+                currentSection = 'expectedResults';
                 testCase.expectedResults.push(cleanContentLine(content));
             } else if (sectionType === 'actual results') {
+                currentSection = 'actualResults';
                 testCase.actualResults.push(cleanContentLine(content));
             }
-        } else {
-            // Also check for standalone section headers (for backward compatibility)
-            const sectionMap = {
-                'given (preconditions)': 'given',
-                'given': 'given',
-                'steps (when)': 'steps',
-                'when': 'steps',
-                'expected results (then)': 'expectedResults',
-                'then': 'expectedResults',
-                'actual results': 'actualResults'
-            };
+            continue;
+        }
 
-            let normalizedLine = trimmed.toLowerCase();
-            normalizedLine = normalizedLine.replace(/\*\*/g, '').trim();
+        // Check for plain BDD format: Given/When/Then/And at start of line
+        // Pattern matches: "Given ...", "When ...", "Then ...", "And ..."
+        const bddPattern = /^(Given|When|Then|And)\s+(.+)$/i;
+        const bddMatch = trimmed.match(bddPattern);
 
-            // Check if it's a section header
-            let matchedSection = null;
-            for (const [key, sectionKey] of Object.entries(sectionMap)) {
-                if (normalizedLine === key || normalizedLine.startsWith(key + ':')) {
-                    matchedSection = sectionKey;
-                    break;
+        if (bddMatch) {
+            const keyword = bddMatch[1].toLowerCase();
+            const content = bddMatch[2].trim();
+
+            // Map keywords to sections
+            if (keyword === 'given') {
+                currentSection = 'given';
+                testCase.given.push(cleanContentLine(content));
+            } else if (keyword === 'when') {
+                currentSection = 'steps';
+                testCase.steps.push(cleanContentLine(content));
+            } else if (keyword === 'then') {
+                currentSection = 'expectedResults';
+                testCase.expectedResults.push(cleanContentLine(content));
+            } else if (keyword === 'and') {
+                // "And" continues the current section
+                if (currentSection === 'given') {
+                    testCase.given.push(cleanContentLine(content));
+                } else if (currentSection === 'steps') {
+                    testCase.steps.push(cleanContentLine(content));
+                } else if (currentSection === 'expectedResults') {
+                    testCase.expectedResults.push(cleanContentLine(content));
+                } else if (currentSection === 'actualResults') {
+                    testCase.actualResults.push(cleanContentLine(content));
+                } else {
+                    // If no current section, default to expectedResults (most common after Then)
+                    currentSection = 'expectedResults';
+                    testCase.expectedResults.push(cleanContentLine(content));
                 }
             }
+            continue;
+        }
 
-            // If not a header and we have content, it might be continuation
-            // For now, we'll skip continuation lines in this format
+        // Check for standalone section headers (for backward compatibility)
+        const sectionMap = {
+            'given (preconditions)': 'given',
+            'given': 'given',
+            'steps (when)': 'steps',
+            'when': 'steps',
+            'expected results (then)': 'expectedResults',
+            'then': 'expectedResults',
+            'actual results': 'actualResults'
+        };
+
+        let normalizedLine = trimmed.toLowerCase();
+        normalizedLine = normalizedLine.replace(/\*\*/g, '').trim();
+
+        // Check if it's a section header
+        let matchedSection = null;
+        for (const [key, sectionKey] of Object.entries(sectionMap)) {
+            if (normalizedLine === key || normalizedLine.startsWith(key + ':')) {
+                matchedSection = sectionKey;
+                currentSection = sectionKey;
+                break;
+            }
+        }
+
+        // If it's a continuation line (starts with bullet or indentation) and we have a current section
+        if (!matchedSection && currentSection) {
+            const bulletPattern = /^[-*+•]\s*(.+)$/;
+            const bulletMatch = trimmed.match(bulletPattern);
+            const content = bulletMatch ? bulletMatch[1].trim() : trimmed;
+            
+            if (currentSection === 'given') {
+                testCase.given.push(cleanContentLine(content));
+            } else if (currentSection === 'steps') {
+                testCase.steps.push(cleanContentLine(content));
+            } else if (currentSection === 'expectedResults') {
+                testCase.expectedResults.push(cleanContentLine(content));
+            } else if (currentSection === 'actualResults') {
+                testCase.actualResults.push(cleanContentLine(content));
+            }
         }
     }
 }
