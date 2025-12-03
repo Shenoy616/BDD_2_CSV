@@ -65,4 +65,3 @@ The generated CSV contains these columns:
 ## License
 
 Free to use and modify.
-
