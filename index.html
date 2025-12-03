@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown → Test Case CSV Converter</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Markdown → Test Case CSV Converter</h1>
+            <p class="description">
+                Paste or type your BDD-style markdown test cases below to convert them into CSV format.
+                Works entirely in your browser - no data is sent to any server.
+            </p>
+        </header>
+
+        <main>
+            <div class="input-section">
+                <label for="markdownInput">Markdown Input:</label>
+                <textarea id="markdownInput" placeholder="Paste your markdown test cases here...&#10;&#10;Example:&#10;#### TC01 — Update Name (Happy Path) — P1&#10;**Given** the user is logged into Unifize&#10;**When** the user updates their display name&#10;**Then** the system should save the new name"></textarea>
+            </div>
+
+            <div class="action-section">
+                <button id="convertBtn" class="btn btn-primary" disabled>Convert to CSV</button>
+            </div>
+
+            <div id="resultSection" class="result-section" style="display: none;">
+                <div id="resultMessage" class="result-message"></div>
+                <button id="downloadBtn" class="btn btn-success" disabled>Download CSV</button>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
