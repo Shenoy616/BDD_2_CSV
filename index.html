@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Unifize - BDD Markdown → CSV Converter</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
     <div class="container">
@@ -12,23 +15,43 @@
             <div class="logo-container">
                 <img src="Unifize.svg" alt="Unifize Logo" class="logo">
             </div>
-            <p class="subtitle">BDD Markdown → Test Case CSV Converter</p>
-            <p class="description">
-                Paste or type your BDD Style markdown test cases below to convert them into CSV format.<br>
-                So that you can import them into testomata.io
-            </p>
+            
+            <!-- Tabs Navigation -->
+            <div class="tabs-container">
+                <button class="tab-btn active" data-tab="testcase">Testcase to CSV</button>
+                <button class="tab-btn" data-tab="bdd">BDD Testcase to CSV</button>
+            </div>
         </header>
 
         <main>
-            <div class="input-section">
-                <label for="markdownInput">Markdown Input:</label>
-                <textarea id="markdownInput" placeholder="Paste your markdown test cases here...&#10;&#10;Example:&#10;#### TC01 — Update Name (Happy Path) — P1&#10;**Given** the user is logged into Unifize&#10;**When** the user updates their display name&#10;**Then** the system should save the new name"></textarea>
+            <!-- Testcase to CSV Tab Content -->
+            <div id="testcaseTab" class="tab-content active">
+                <p class="description">
+                    Paste or type your test cases below to convert them into CSV format with Title and Description columns.
+                </p>
+                <div class="input-section">
+                    <textarea id="testcaseInput" placeholder="Paste your test cases here...&#10;&#10;Example:&#10;Verify that the AI field works correctly.&#10;&#10;Given (Preconditions)&#10;The user has logged into Unifize&#10;&#10;Steps (When)&#10;Open the Task creation form&#10;&#10;Expected Results (Then)&#10;The AI field is visible"></textarea>
+                </div>
+                <div class="action-section">
+                    <button id="convertTestcaseBtn" class="btn btn-primary" disabled>Convert to CSV</button>
+                </div>
             </div>
 
-            <div class="action-section">
-                <button id="convertBtn" class="btn btn-primary" disabled>Convert to CSV</button>
+            <!-- BDD Testcase to CSV Tab Content -->
+            <div id="bddTab" class="tab-content">
+                <p class="description">
+                    Paste or type your BDD Style markdown test cases below to convert them into CSV format.<br>
+                    So that you can import them into testomata.io
+                </p>
+                <div class="input-section">
+                    <textarea id="markdownInput" placeholder="Paste your markdown test cases here...&#10;&#10;Example:&#10;#### TC01 — Update Name (Happy Path) — P1&#10;**Given** the user is logged into Unifize&#10;**When** the user updates their display name&#10;**Then** the system should save the new name"></textarea>
+                </div>
+                <div class="action-section">
+                    <button id="convertBtn" class="btn btn-primary" disabled>Convert to CSV</button>
+                </div>
             </div>
 
+            <!-- Result Section (shared) -->
             <div id="resultSection" class="result-section" style="display: none;">
                 <div id="resultMessage" class="result-message"></div>
                 <button id="downloadBtn" class="btn btn-success" disabled>Download CSV</button>

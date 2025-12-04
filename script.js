@@ -3,17 +3,35 @@ let csvData = null;
 
 // DOM elements
 const markdownInput = document.getElementById('markdownInput');
+const testcaseInput = document.getElementById('testcaseInput');
 const convertBtn = document.getElementById('convertBtn');
+const convertTestcaseBtn = document.getElementById('convertTestcaseBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const resultSection = document.getElementById('resultSection');
 const resultMessage = document.getElementById('resultMessage');
+const tabButtons = document.querySelectorAll('.tab-btn');
+const tabContents = document.querySelectorAll('.tab-content');
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
+    // Tab switching
+    tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tabName = btn.getAttribute('data-tab');
+            switchTab(tabName);
+        });
+    });
+
+    // BDD converter
     convertBtn.addEventListener('click', handleConvert);
+    
+    // Testcase converter
+    convertTestcaseBtn.addEventListener('click', handleTestcaseConvert);
+    
+    // Download button
     downloadBtn.addEventListener('click', handleDownload);
     
-    // Enable convert button when there's content
+    // Enable convert buttons when there's content
     markdownInput.addEventListener('input', () => {
         if (markdownInput.value.trim()) {
             convertBtn.disabled = false;
@@ -21,7 +39,42 @@ document.addEventListener('DOMContentLoaded', () => {
             convertBtn.disabled = true;
         }
     });
+
+    testcaseInput.addEventListener('input', () => {
+        if (testcaseInput.value.trim()) {
+            convertTestcaseBtn.disabled = false;
+        } else {
+            convertTestcaseBtn.disabled = true;
+        }
+    });
 });
+
+/**
+ * Switch between tabs
+ */
+function switchTab(tabName) {
+    // Update tab buttons
+    tabButtons.forEach(btn => {
+        if (btn.getAttribute('data-tab') === tabName) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Update tab contents
+    tabContents.forEach(content => {
+        if (content.id === `${tabName}Tab`) {
+            content.classList.add('active');
+        } else {
+            content.classList.remove('active');
+        }
+    });
+
+    // Hide result section when switching tabs
+    resultSection.style.display = 'none';
+    csvData = null;
+}
 
 /**
  * Handle convert button click
@@ -459,5 +512,211 @@ function showResult(message, type = 'info') {
     resultMessage.textContent = message;
     resultMessage.className = `result-message ${type}`;
     resultSection.style.display = 'block';
+}
+
+/**
+ * Handle testcase convert button click (new format)
+ */
+function handleTestcaseConvert() {
+    const input = testcaseInput.value.trim();
+    
+    if (!input) {
+        showResult('Please enter or paste test case content first.', 'error');
+        return;
+    }
+
+    try {
+        const testCases = parseTestcaseFormat(input);
+        
+        if (testCases.length === 0) {
+            showResult('No test cases found. Make sure your input contains test case titles.', 'error');
+            return;
+        }
+
+        // Generate CSV
+        csvData = generateTestcaseCSV(testCases);
+        
+        // Show success message
+        showResult(`✅ Parsed ${testCases.length} test case${testCases.length === 1 ? '' : 's'} successfully.`, 'success');
+        
+        downloadBtn.disabled = false;
+    } catch (error) {
+        showResult(`Error parsing test cases: ${error.message}`, 'error');
+        console.error('Parse error:', error);
+    }
+}
+
+/**
+ * Parse testcase format into test case objects
+ * Format:
+ *   Title line
+ *   Given (Preconditions)
+ *   ...content...
+ *   Steps (When)
+ *   ...content...
+ *   Expected Results (Then)
+ *   ...content...
+ *   Actual Results
+ *   ...content...
+ */
+function parseTestcaseFormat(input) {
+    const lines = input.split('\n');
+    const testCases = [];
+    let currentTestCase = null;
+    let currentSection = null;
+    let sectionContent = [];
+    let previousLineWasEmpty = false;
+
+    // Helper function to save current section
+    function saveCurrentSection() {
+        if (currentTestCase && currentSection && sectionContent.length > 0) {
+            if (currentSection === 'given') {
+                currentTestCase.given = [...sectionContent];
+            } else if (currentSection === 'steps') {
+                currentTestCase.steps = [...sectionContent];
+            } else if (currentSection === 'expectedResults') {
+                currentTestCase.expectedResults = [...sectionContent];
+            } else if (currentSection === 'actualResults') {
+                currentTestCase.actualResults = [...sectionContent];
+            }
+            sectionContent = [];
+        }
+    }
+
+    // Helper function to check if a line is a section header
+    function isSectionHeader(line) {
+        const sectionPattern = /^(Given\s*\(Preconditions\)|Steps\s*\(When\)|Expected\s+Results\s*\(Then\)|Actual\s+Results)$/i;
+        return sectionPattern.test(line.trim());
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Handle empty lines
+        if (!trimmed) {
+            previousLineWasEmpty = true;
+            continue;
+        }
+
+        // Check if this is a section header
+        if (isSectionHeader(trimmed)) {
+            // Save previous section
+            saveCurrentSection();
+
+            // Determine section type
+            const sectionText = trimmed.toLowerCase();
+            if (sectionText.includes('given')) {
+                currentSection = 'given';
+            } else if (sectionText.includes('steps') || sectionText.includes('when')) {
+                currentSection = 'steps';
+            } else if (sectionText.includes('expected') || sectionText.includes('then')) {
+                currentSection = 'expectedResults';
+            } else if (sectionText.includes('actual')) {
+                currentSection = 'actualResults';
+            }
+            previousLineWasEmpty = false;
+            continue;
+        }
+
+        // Check if this is a new test case title
+        // A new title appears when:
+        // 1. We don't have a current test case (first test case), OR
+        // 2. We have a test case, previous line was empty, and this line is NOT a section header
+        //    (meaning we've finished the previous test case and this is a new title)
+        const isNewTitle = !currentTestCase || 
+                          (currentTestCase && previousLineWasEmpty && !isSectionHeader(trimmed));
+
+        if (isNewTitle) {
+            // Save previous test case if exists
+            if (currentTestCase) {
+                saveCurrentSection();
+                testCases.push(currentTestCase);
+            }
+
+            // Start new test case
+            currentTestCase = {
+                title: trimmed,
+                given: [],
+                steps: [],
+                expectedResults: [],
+                actualResults: []
+            };
+            currentSection = null;
+            sectionContent = [];
+            previousLineWasEmpty = false;
+            continue;
+        }
+
+        // If we have a current section, this is content for that section
+        if (currentSection) {
+            sectionContent.push(trimmed);
+            previousLineWasEmpty = false;
+            continue;
+        }
+
+        // If we reach here, we have a test case but no section yet
+        // This might be title continuation (though typically title is single line)
+        // Or it might be content before first section - treat as title continuation
+        if (currentTestCase) {
+            currentTestCase.title += ' ' + trimmed;
+        }
+        previousLineWasEmpty = false;
+    }
+
+    // Save the last test case
+    if (currentTestCase) {
+        saveCurrentSection();
+        testCases.push(currentTestCase);
+    }
+
+    return testCases;
+}
+
+/**
+ * Generate CSV string from test cases (Title and Description only)
+ */
+function generateTestcaseCSV(testCases) {
+    const headers = ['Title', 'Description'];
+
+    const rows = testCases.map(testCase => {
+        // Build description with section headers prefixed with ##
+        const descriptionParts = [];
+
+        if (testCase.given.length > 0) {
+            descriptionParts.push('##Given (Preconditions)');
+            descriptionParts.push(...testCase.given);
+            descriptionParts.push(''); // Add blank line after section
+        }
+
+        if (testCase.steps.length > 0) {
+            descriptionParts.push('##Steps (When)');
+            descriptionParts.push(...testCase.steps);
+            descriptionParts.push(''); // Add blank line after section
+        }
+
+        if (testCase.expectedResults.length > 0) {
+            descriptionParts.push('##Expected Results (Then)');
+            descriptionParts.push(...testCase.expectedResults);
+            descriptionParts.push(''); // Add blank line after section
+        }
+
+        if (testCase.actualResults.length > 0) {
+            descriptionParts.push('##Actual Results');
+            descriptionParts.push(...testCase.actualResults);
+        }
+
+        // Remove trailing blank line if exists
+        if (descriptionParts[descriptionParts.length - 1] === '') {
+            descriptionParts.pop();
+        }
+
+        return {
+            'Title': testCase.title.trim(),
+            'Description': descriptionParts.join('\n')
+        };
+    });
+
+    return toCSV(rows, headers);
 }
 
