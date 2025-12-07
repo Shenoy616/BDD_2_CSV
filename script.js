@@ -127,8 +127,8 @@ function parseMarkdown(markdown) {
         const line = lines[i];
         const trimmedLine = line.trim();
 
-        // Ignore separator lines (---)
-        if (trimmedLine === '---' || trimmedLine.match(/^-{3,}$/)) {
+        // Ignore separator lines (---, ---, etc.)
+        if (/^-{3,}\s*$/.test(trimmedLine)) {
             continue;
         }
 
@@ -140,8 +140,8 @@ function parseMarkdown(markdown) {
         // Check if this is a test case heading
         // Format 1: #### TC01 — Title — P1 (markdown format)
         // Format 2: TC01 - Title - Subtitle [Priority: P1] (plain format)
-        const isMarkdownHeading = trimmedLine.startsWith('#### ');
-        const isPlainHeading = /^TC\d+\s*[-–—]\s*.+/.test(trimmedLine);
+        const isMarkdownHeading = /^####\s+/.test(trimmedLine);
+        const isPlainHeading = /^TC\d+\s*[-–—:]\s*.+/.test(trimmedLine);
         
         if (isMarkdownHeading || isPlainHeading) {
             // Save previous test case if exists
@@ -198,24 +198,24 @@ function parseMarkdown(markdown) {
 function parseHeading(heading) {
     let priority = 'P1'; // default
     
-    // Extract priority from [Priority: P1] format
-    const bracketPriorityMatch = heading.match(/\[Priority:\s*(P[0-9]+)\]/i);
+    // Extract priority from [Priority: P1] or [Priority:P1] format
+    const bracketPriorityMatch = heading.match(/\[Priority\s*:\s*(P\d+)\]/i);
     if (bracketPriorityMatch) {
         priority = bracketPriorityMatch[1].toUpperCase();
         // Remove priority from heading for further parsing
-        heading = heading.replace(/\s*\[Priority:\s*P[0-9]+\]/i, '').trim();
+        heading = heading.replace(/\s*\[Priority\s*:\s*P\d+\]\s*/i, '').trim();
     }
     
-    // Extract priority from — P1 format at the end
-    const emDashPriorityMatch = heading.match(/\s*[—–]\s*(P[0-9]+)\s*$/i);
+    // Extract priority from — P1 or - P1 format at the end
+    const emDashPriorityMatch = heading.match(/[\s—–\-]+\s*(P\d+)\s*$/i);
     if (emDashPriorityMatch) {
         priority = emDashPriorityMatch[1].toUpperCase();
         // Remove priority from heading for further parsing
-        heading = heading.replace(/\s*[—–]\s*P[0-9]+\s*$/i, '').trim();
+        heading = heading.replace(/[\s—–\-]+\s*P\d+\s*$/i, '').trim();
     }
 
     // Pattern: TC followed by numbers, then separator (—, –, -, or :), then title
-    // Matches: TC01 - Title, TC01 — Title, TC01: Title
+    // Matches: TC01 - Title, TC01 — Title, TC01: Title, TC01 – Title
     const idPattern = /^(TC\d+)\s*[—–\-:]\s*(.+)$/i;
     const match = heading.match(idPattern);
 
@@ -253,8 +253,8 @@ function processTestCaseBlock(testCase, blockLines) {
             continue;
         }
 
-        // Check for markdown inline format: **Given** content
-        const markdownPattern = /^\*\*((?:Given|When|Then|Actual\s+Results))\*\*\s*(.+)$/i;
+        // Check for markdown inline format: **Given** content or **Given:** content
+        const markdownPattern = /^\*\*((?:Given|When|Then|Actual\s+Results?))\*\*\s*:?\s*(.+)$/i;
         const markdownMatch = trimmed.match(markdownPattern);
 
         if (markdownMatch) {
@@ -279,8 +279,8 @@ function processTestCaseBlock(testCase, blockLines) {
         }
 
         // Check for plain BDD format: Given/When/Then/And at start of line
-        // Pattern matches: "Given ...", "When ...", "Then ...", "And ..."
-        const bddPattern = /^(Given|When|Then|And)\s+(.+)$/i;
+        // Pattern matches: "Given ...", "When ...", "Then ...", "And ...", "Given:", "When:", etc.
+        const bddPattern = /^(Given|When|Then|And)\s*:?\s+(.+)$/i;
         const bddMatch = trimmed.match(bddPattern);
 
         if (bddMatch) {
@@ -328,7 +328,8 @@ function processTestCaseBlock(testCase, blockLines) {
         };
 
         let normalizedLine = trimmed.toLowerCase();
-        normalizedLine = normalizedLine.replace(/\*\*/g, '').trim();
+        // Remove markdown formatting (**, __, etc.)
+        normalizedLine = normalizedLine.replace(/\*\*|__/g, '').trim();
 
         // Check if it's a section header
         let matchedSection = null;
@@ -342,9 +343,10 @@ function processTestCaseBlock(testCase, blockLines) {
 
         // If it's a continuation line (starts with bullet or indentation) and we have a current section
         if (!matchedSection && currentSection) {
-            const bulletPattern = /^[-*+•]\s*(.+)$/;
+            // Match various bullet styles: -, *, +, •, ◦, ▪, ▫, or numbered lists (1., 2., etc.)
+            const bulletPattern = /^([-*+•◦▪▫]|\d+[.)])\s*(.+)$/;
             const bulletMatch = trimmed.match(bulletPattern);
-            const content = bulletMatch ? bulletMatch[1].trim() : trimmed;
+            const content = bulletMatch ? bulletMatch[2].trim() : trimmed;
             
             if (currentSection === 'given') {
                 testCase.given.push(cleanContentLine(content));
@@ -363,12 +365,26 @@ function processTestCaseBlock(testCase, blockLines) {
  * Clean a content line (remove bullets, markdown markers, etc.)
  */
 function cleanContentLine(line) {
-    // Remove leading bullet markers (-, *, +)
-    let cleaned = line.replace(/^[-*+]\s+/, '');
+    // Remove leading bullet markers (-, *, +, •, ◦, ▪, ▫) or numbered lists
+    let cleaned = line.replace(/^([-*+•◦▪▫]|\d+[.)])\s+/, '');
     
-    // Remove markdown emphasis markers (simple removal of ** and _)
+    // Remove markdown emphasis markers
+    // First remove bold markers (**bold**, __bold__) - must be done first
     cleaned = cleaned.replace(/\*\*/g, '');
-    cleaned = cleaned.replace(/^_|_$/g, '');
+    cleaned = cleaned.replace(/__/g, '');
+    // Then remove remaining italic markers (*italic*, _italic_) - single asterisk/underscore
+    // Use word boundaries to avoid removing asterisks in the middle of words
+    cleaned = cleaned.replace(/\b\*\b/g, '');
+    cleaned = cleaned.replace(/\b_\b/g, '');
+    // Also handle standalone asterisks/underscores at word boundaries
+    cleaned = cleaned.replace(/\s*\*\s*/g, ' ');
+    cleaned = cleaned.replace(/\s*_\s*/g, ' ');
+    
+    // Remove markdown code markers (`code`)
+    cleaned = cleaned.replace(/`/g, '');
+    
+    // Clean up multiple spaces
+    cleaned = cleaned.replace(/\s+/g, ' ');
     
     // Trim whitespace
     cleaned = cleaned.trim();
@@ -584,9 +600,15 @@ function parseTestcaseFormat(input) {
     }
 
     // Helper function to check if a line is a section header
+    // Handles both formats: "Given (Preconditions)" and "##Given (Preconditions)"
     function isSectionHeader(line) {
-        const sectionPattern = /^(Given\s*\(Preconditions\)|Steps\s*\(When\)|Expected\s+Results\s*\(Then\)|Actual\s+Results)$/i;
-        return sectionPattern.test(line.trim());
+        const trimmed = line.trim();
+        // Remove leading markdown headers (##, ###, ####) if present
+        const cleaned = trimmed.replace(/^#{1,4}\s*/, '').trim();
+        // Comprehensive pattern that handles spacing variations, optional parentheses, and case variations
+        // Handles: "Given (Preconditions)", "Given(Preconditions)", "Given", "##Given (Preconditions)", etc.
+        const sectionPattern = /^(Given\s*\(?\s*Preconditions?\s*\)?|When\s*\(?\s*Steps?\s*\)?|Steps\s*\(?\s*When\s*\)?|Then\s*\(?\s*Expected\s+Results?\s*\)?|Expected\s+Results?\s*\(?\s*Then\s*\)?|Actual\s+Results?)\s*$/i;
+        return sectionPattern.test(cleaned);
     }
 
     for (let i = 0; i < lines.length; i++) {
@@ -604,8 +626,9 @@ function parseTestcaseFormat(input) {
             // Save previous section
             saveCurrentSection();
 
-            // Determine section type
-            const sectionText = trimmed.toLowerCase();
+            // Determine section type (remove markdown header prefix if present)
+            const cleaned = trimmed.replace(/^#{1,4}\s*/, '').trim();
+            const sectionText = cleaned.toLowerCase();
             if (sectionText.includes('given')) {
                 currentSection = 'given';
             } else if (sectionText.includes('steps') || sectionText.includes('when')) {
