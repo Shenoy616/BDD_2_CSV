@@ -611,9 +611,31 @@ function parseTestcaseFormat(input) {
         return sectionPattern.test(cleaned);
     }
 
+    // Helper function to check if a line is a separator (dash line)
+    function isSeparator(line) {
+        const trimmed = line.trim();
+        // Match lines that are primarily dashes, hyphens, or equal signs (separators)
+        // Must have at least 10 consecutive dashes/hyphens/equals to be considered a separator
+        return /^[-=]{10,}\s*$/.test(trimmed);
+    }
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
+
+        // Handle separator lines (dash separators between test cases)
+        if (isSeparator(trimmed)) {
+            // Save current test case if exists
+            if (currentTestCase) {
+                saveCurrentSection();
+                testCases.push(currentTestCase);
+                currentTestCase = null;
+                currentSection = null;
+                sectionContent = [];
+            }
+            previousLineWasEmpty = true;
+            continue;
+        }
 
         // Handle empty lines
         if (!trimmed) {
@@ -644,11 +666,12 @@ function parseTestcaseFormat(input) {
 
         // Check if this is a new test case title
         // A new title appears when:
-        // 1. We don't have a current test case (first test case), OR
+        // 1. We don't have a current test case (first test case or after separator), OR
         // 2. We have a test case, previous line was empty, and this line is NOT a section header
         //    (meaning we've finished the previous test case and this is a new title)
-        const isNewTitle = !currentTestCase || 
-                          (currentTestCase && previousLineWasEmpty && !isSectionHeader(trimmed));
+        // Must not be a section header
+        const isNewTitle = !isSectionHeader(trimmed) && 
+                          (!currentTestCase || (currentTestCase && previousLineWasEmpty));
 
         if (isNewTitle) {
             // Save previous test case if exists
