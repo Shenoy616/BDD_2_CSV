@@ -581,7 +581,6 @@ function parseTestcaseFormat(input) {
     let currentTestCase = null;
     let currentSection = null;
     let sectionContent = [];
-    let previousLineWasEmpty = false;
 
     // Helper function to save current section
     function saveCurrentSection() {
@@ -600,14 +599,17 @@ function parseTestcaseFormat(input) {
     }
 
     // Helper function to check if a line is a section header
-    // Handles both formats: "Given (Preconditions)" and "##Given (Preconditions)"
+    // Handles both formats: "Given (Preconditions)" and "##Given (Preconditions)" and simple "##Given"
     function isSectionHeader(line) {
         const trimmed = line.trim();
         // Remove leading markdown headers (##, ###, ####) if present
         const cleaned = trimmed.replace(/^#{1,4}\s*/, '').trim();
-        // Comprehensive pattern that handles spacing variations, optional parentheses, and case variations
-        // Handles: "Given (Preconditions)", "Given(Preconditions)", "Given", "##Given (Preconditions)", etc.
-        const sectionPattern = /^(Given\s*\(?\s*Preconditions?\s*\)?|When\s*\(?\s*Steps?\s*\)?|Steps\s*\(?\s*When\s*\)?|Then\s*\(?\s*Expected\s+Results?\s*\)?|Expected\s+Results?\s*\(?\s*Then\s*\)?|Actual\s+Results?)\s*$/i;
+        // Comprehensive pattern that handles:
+        // - Simple format: "Given", "When", "Then", "Actual Result" or "Actual Results"
+        // - With parentheses: "Given (Preconditions)", "When (Steps)", etc.
+        // - With labels: "Given (Preconditions)", "Steps (When)", "Expected Results (Then)"
+        // - Case variations and spacing
+        const sectionPattern = /^(Given\s*(\(?\s*Preconditions?\s*\)?)?|When\s*(\(?\s*Steps?\s*\)?)?|Steps\s*(\(?\s*When\s*\)?)?|Then\s*(\(?\s*Expected\s+Results?\s*\)?)?|Expected\s+Results?\s*(\(?\s*Then\s*\)?)?|Actual\s+Result\s*s?)\s*$/i;
         return sectionPattern.test(cleaned);
     }
 
@@ -617,6 +619,12 @@ function parseTestcaseFormat(input) {
         // Match lines that are primarily dashes, hyphens, or equal signs (separators)
         // Must have at least 10 consecutive dashes/hyphens/equals to be considered a separator
         return /^[-=]{10,}\s*$/.test(trimmed);
+    }
+
+    // Helper function to check if a line starts a new test case (starts with "Verify")
+    function isTestcaseTitle(line) {
+        const trimmed = line.trim();
+        return /^Verify/i.test(trimmed);
     }
 
     for (let i = 0; i < lines.length; i++) {
@@ -633,13 +641,32 @@ function parseTestcaseFormat(input) {
                 currentSection = null;
                 sectionContent = [];
             }
-            previousLineWasEmpty = true;
             continue;
         }
 
-        // Handle empty lines
+        // Handle empty lines - skip them but continue processing
         if (!trimmed) {
-            previousLineWasEmpty = true;
+            continue;
+        }
+
+        // Check if this is a new test case title (starts with "Verify")
+        if (isTestcaseTitle(trimmed)) {
+            // Save previous test case if exists
+            if (currentTestCase) {
+                saveCurrentSection();
+                testCases.push(currentTestCase);
+            }
+
+            // Start new test case
+            currentTestCase = {
+                title: trimmed,
+                given: [],
+                steps: [],
+                expectedResults: [],
+                actualResults: []
+            };
+            currentSection = null;
+            sectionContent = [];
             continue;
         }
 
@@ -660,54 +687,20 @@ function parseTestcaseFormat(input) {
             } else if (sectionText.includes('actual')) {
                 currentSection = 'actualResults';
             }
-            previousLineWasEmpty = false;
-            continue;
-        }
-
-        // Check if this is a new test case title
-        // A new title appears when:
-        // 1. We don't have a current test case (first test case or after separator), OR
-        // 2. We have a test case, previous line was empty, and this line is NOT a section header
-        //    (meaning we've finished the previous test case and this is a new title)
-        // Must not be a section header
-        const isNewTitle = !isSectionHeader(trimmed) && 
-                          (!currentTestCase || (currentTestCase && previousLineWasEmpty));
-
-        if (isNewTitle) {
-            // Save previous test case if exists
-            if (currentTestCase) {
-                saveCurrentSection();
-                testCases.push(currentTestCase);
-            }
-
-            // Start new test case
-            currentTestCase = {
-                title: trimmed,
-                given: [],
-                steps: [],
-                expectedResults: [],
-                actualResults: []
-            };
-            currentSection = null;
-            sectionContent = [];
-            previousLineWasEmpty = false;
             continue;
         }
 
         // If we have a current section, this is content for that section
-        if (currentSection) {
+        if (currentSection && currentTestCase) {
             sectionContent.push(trimmed);
-            previousLineWasEmpty = false;
             continue;
         }
 
-        // If we reach here, we have a test case but no section yet
-        // This might be title continuation (though typically title is single line)
-        // Or it might be content before first section - treat as title continuation
-        if (currentTestCase) {
+        // If we have a test case but no section yet, this might be title continuation
+        // (though typically title is single line)
+        if (currentTestCase && !currentSection) {
             currentTestCase.title += ' ' + trimmed;
         }
-        previousLineWasEmpty = false;
     }
 
     // Save the last test case
